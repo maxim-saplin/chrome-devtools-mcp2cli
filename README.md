@@ -10,14 +10,12 @@ It is meant for browser smoke tests, app-driving checks, and focused debugging f
 
 This skill came out of a small Copilot CLI experiment comparing direct Chrome DevTools MCP with a CLI-wrapper path over the same 9-step browser smoke test.
 
-The useful signal was the startup/context shape, not a general benchmark claim:
-
 | Path | Fresh context | Completed-run message growth | Runtime notes |
 |---|---:|---:|---|
 | CLI skill through `mcp2cli` | 19k total, `MCP Tools` 155 | about 18-21k | 9/9 passes; slower in one run, steadier context growth |
 | Direct Chrome DevTools MCP | 24k total, `MCP Tools` 4.9k | about 16-56k | 9/9 passes; fastest single run, more variance |
 
-That is one local experiment, not a universal result. It was enough to make the workflow worth packaging: direct MCP is richer when your agent has it; the CLI skill is useful when you want a shell-native path with progressive discovery and lower upfront tool-surface load.
+Direct MCP is richer; the CLI skill has basic set of MCP tools exposed and is useful when you want a shell-native path with progressive discovery and lower upfront tool-surface load.
 
 [pi](https://pi.dev) is a good example of the target shape: a lean coding agent that can run commands but may not come with MCP mounted in the runtime. For that kind of agent, `mcp2cli` is less about replacing MCP and more about reaching MCP servers from the interface the agent already has.
 
