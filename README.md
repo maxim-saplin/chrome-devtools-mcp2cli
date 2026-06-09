@@ -8,7 +8,7 @@ It is meant for browser smoke tests, app-driving checks, and focused debugging f
 
 ## Field note
 
-This skill came out of a small Copilot CLI experiment comparing direct Chrome DevTools MCP with a CLI-wrapper path over the same 9-step browser smoke test.
+This skill came out of a small Copilot CLI experiment comparing direct Chrome DevTools MCP with a CLI-wrapper path over the same 9-step browser smoke test (3 runs per variant).
 
 | Path | Fresh context | Completed-run message growth | Runtime notes |
 |---|---:|---:|---|
