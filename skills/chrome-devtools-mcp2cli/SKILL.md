@@ -4,23 +4,23 @@ description: Use mcp2cli as a CLI shim for Chrome DevTools MCP to drive a live C
 ---
 # Chrome DevTools MCP through mcp2cli
 
-Use this skill when you need to drive Chrome from the terminal through `mcp2cli`, especially in agents that can run shell commands but do not have native MCP servers mounted, or when you want a shell-native browser workflow with progressive command discovery.
+Use this skill when you need to drive Chrome from the terminal through `mcp2cli`, especially in agents that can run shell commands but do not have native MCP servers mounted.
 
-Direct Chrome DevTools MCP remains the richer native interface when your agent has MCP available. This skill packages a terminal-first workflow for smoke tests, app checks, and focused debugging.
+Direct Chrome DevTools MCP remains the richer native interface when your agent already has MCP available. This skill packages a terminal-first workflow for smoke tests, app checks, and focused debugging.
 
 ## Mental model
 
-Native MCP exposes tool definitions directly to the agent. This CLI path makes the agent discover and use the tool surface through command-line affordances:
+Keep browser work small and repeatable:
 
-1. preflight browser-driving prerequisites
-2. start one named session
-3. navigate to the target app
-4. inspect page state through snapshots or script assertions
-5. interact with stable controls
-6. inspect console/network only when needed
-7. stop the session
+1. preflight the browser-driving prerequisites
+2. check whether a live session already exists
+3. start or reuse one named session per app
+4. navigate to the target app once
+5. use selector-first helpers for normal interaction
+6. fall back to raw `mcp2cli` commands only when debugging
+7. stop the session once the app checks are finished
 
-Keep discovery progressive. Do not dump every available command into the conversation when the task only needs navigation, snapshots, and one or two interactions.
+Do not turn every browser action into a fresh session. The point of this skill is to keep one app session live across related checks.
 
 ## Requirements
 
@@ -55,12 +55,6 @@ npx -y chrome-devtools-mcp@latest --isolated
 
 This follows the Chrome DevTools MCP README recommendation to use `@latest`. If a task needs strict reproducibility, override `MCP_SERVER_CMD` with a pinned version for that run.
 
-Override it when needed:
-
-```bash
-MCP_SERVER_CMD='npx -y chrome-devtools-mcp@latest --isolated --headless' bash scripts/preflight.sh
-```
-
 ## Preflight first
 
 Before browser work, run preflight from the skill root:
@@ -85,17 +79,60 @@ Preflight validates local/browser-driving prerequisites:
 
 Target URL reachability is intentionally optional. App availability should normally be exposed by the real browser-driving command, not hidden inside prerequisite setup.
 
-Useful environment variables:
+## Persistent app session workflow
 
-- `MCP_SERVER_CMD` — override the Chrome DevTools MCP server command
-- `NAV_TIMEOUT_MS` — override navigation timeout, default `60000`
-- `KEEP_LOG_ON_FAIL=1` — keep preflight temp logs on failure
+For a live app, keep one named session open across all related checks.
 
-If preflight fails, stop and fix the missing prerequisite first.
+### 1) Check existing sessions
 
-## Session flow
+```bash
+bash scripts/browser-session.sh session-list
+```
 
-Use one named session for repeated browser commands. Replace `browser` if another session is already active.
+If the app session is already alive, reuse it instead of starting a second one.
+
+### 2) Start or reuse the app session
+
+```bash
+bash scripts/browser-session.sh ensure-session browserverify
+```
+
+Override the session name when another app is already using `browserverify`.
+
+When `server-cmd` is omitted, `ensure-session` and `start-session` use `MCP_SERVER_CMD` if set, otherwise `npx -y chrome-devtools-mcp@latest --isolated`.
+
+### 3) Navigate once
+
+```bash
+bash scripts/browser-session.sh navigate browserverify http://localhost:8000/docs/index.html
+```
+
+### 4) Use selector-first helpers
+
+Examples:
+
+```bash
+bash scripts/browser-session.sh snapshot browserverify
+bash scripts/browser-session.sh click-selector browserverify '#leaderboard tbody tr'
+bash scripts/browser-session.sh fill-selector browserverify '#search' 'queen'
+bash scripts/browser-session.sh get-selector-text browserverify '#cost-per-elo'
+bash scripts/browser-session.sh assert-selector-contains browserverify '#cost-per-elo' 'Cost/Elo:'
+bash scripts/browser-session.sh wait-for-text browserverify 'Leaderboard'
+```
+
+Use raw `mcp2cli` directly only when you need to inspect a lower-level command or debug a failure.
+
+### 5) Stop the session once done
+
+```bash
+bash scripts/browser-session.sh stop-session browserverify
+```
+
+If a session is left behind after an interrupted run, use `session-list` to find it, then stop it explicitly.
+
+## Raw mcp2cli fallback
+
+The wrapper script is the normal path, but the underlying commands remain available.
 
 Start a session:
 
@@ -114,12 +151,6 @@ Inspect current page state:
 
 ```bash
 uvx mcp2cli --session browser take-snapshot
-```
-
-Use verbose snapshots only when necessary; they can get large:
-
-```bash
-uvx mcp2cli --session browser take-snapshot --verbose
 ```
 
 Run a precise DOM assertion:
@@ -143,7 +174,7 @@ uvx mcp2cli --session-list
 
 ## Useful browser commands
 
-Start narrow and ask for command help only when needed:
+Keep discovery progressive. Ask for command help only when needed:
 
 ```bash
 uvx mcp2cli --session browser <command> --help
@@ -157,8 +188,8 @@ Common commands:
 - `take-snapshot`
 - `evaluate-script`
 - `click`
+- `fill`
 - `fill-form`
-- `type-text`
 - `press-key`
 - `wait-for`
 - `list-console-messages`
@@ -170,10 +201,22 @@ Common commands:
 Prefer these defaults:
 
 - `take-snapshot` before `take-screenshot` for ordinary page-state evidence.
-- `fill-form` over many individual `fill` or `click` calls when interacting with forms.
+- `fill-form` or the selector-first `fill-selector` helper over many individual click/fill steps.
 - `evaluate-script` for exact assertions, route checks, counters, and DOM values.
 - console/network commands only after a page misbehaves or when the task asks for diagnostics.
 - one session per target app unless the task explicitly needs more.
+
+## Selector-first wrapper behavior
+
+The helper script turns common actions into selector-based operations so the normal flow does not bounce through uid resolution.
+
+Use `click-selector` for stable elements, `fill-selector` for inputs/selects/checkboxes/radios, `get-selector-text` to read content, and `assert-selector-contains` for direct pass/fail checks.
+
+Use `wait-for-text` for page-wide text that should eventually appear.
+
+By default `wait-for-text` returns a concise one-line success message; set `WAIT_FOR_VERBOSE=1` when you need the full wait output and snapshot.
+
+If a control is too dynamic or the helper is not enough, drop to `evaluate-script` or the raw `click`/`fill` commands as needed.
 
 ## Smoke-test reporting pattern
 
@@ -201,7 +244,8 @@ Avoid using screenshots as primary evidence unless the failure is visual.
 - If a checkbox or similar control is non-interactive, try the associated label once and record that fallback.
 - If a snapshot is huge, use `evaluate-script` for a smaller assertion instead of repeatedly dumping page state.
 - If navigation fails, report the command output as app reachability evidence rather than treating it as a preflight prerequisite failure.
-- Always stop the browser session before handoff.
+- If a session already exists, reuse it instead of starting a duplicate.
+- Always stop the browser session before handoff unless the task explicitly needs it left alive.
 
 ## Security notes
 

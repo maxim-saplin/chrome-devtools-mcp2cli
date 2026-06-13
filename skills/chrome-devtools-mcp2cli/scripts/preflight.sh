@@ -39,6 +39,27 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
 
+is_tool_error_output() {
+  local output="$1"
+  local first_line="${output%%$'\n'*}"
+  [[ "$first_line" == Error:* || "$first_line" == Unable\ to* ]]
+}
+
+run_mcp() {
+  local output
+  if ! output="$(uvx mcp2cli "$@" 2>&1)"; then
+    printf '%s\n' "$output" >"$tmp_log"
+    return 1
+  fi
+
+  printf '%s\n' "$output" >"$tmp_log"
+  if is_tool_error_output "$output"; then
+    return 1
+  fi
+
+  return 0
+}
+
 for cmd in uvx node npx; do
   need_cmd "$cmd"
 done
@@ -55,37 +76,53 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if ! uvx mcp2cli --session-start "$SESSION_NAME" --mcp-stdio "$SERVER_CMD" >"$tmp_log" 2>&1; then
+if ! run_mcp --session-start "$SESSION_NAME" --mcp-stdio "$SERVER_CMD"; then
   cat "$tmp_log" >&2
   fail "unable to start chrome-devtools-mcp session '$SESSION_NAME'"
 fi
 
-if ! uvx mcp2cli --session "$SESSION_NAME" list-pages >"$tmp_log" 2>&1; then
+if ! run_mcp --session "$SESSION_NAME" list-pages; then
   cat "$tmp_log" >&2
   fail "chrome-devtools-mcp session '$SESSION_NAME' started, but list-pages failed"
 fi
 
-if ! uvx mcp2cli --session "$SESSION_NAME" navigate-page --url "about:blank" --timeout "$NAV_TIMEOUT_MS" >"$tmp_log" 2>&1; then
+if ! run_mcp --session "$SESSION_NAME" navigate-page --url "about:blank" --timeout "$NAV_TIMEOUT_MS"; then
   cat "$tmp_log" >&2
   fail "chrome-devtools-mcp could not navigate to about:blank"
 fi
 
 snapshot="$(uvx mcp2cli --session "$SESSION_NAME" take-snapshot 2>&1)"
+if is_tool_error_output "$snapshot"; then
+  echo "$snapshot" >&2
+  fail "failed to read snapshot after about:blank navigation"
+fi
 if [[ "$snapshot" != *"RootWebArea"* ]]; then
   echo "$snapshot" >&2
   fail "snapshot did not contain a RootWebArea"
 fi
+if [[ "$snapshot" != *'url="about:blank"'* ]]; then
+  echo "$snapshot" >&2
+  fail "snapshot after about:blank navigation did not report url=about:blank"
+fi
 
 if [[ -n "$TARGET_URL" ]]; then
-  if ! uvx mcp2cli --session "$SESSION_NAME" navigate-page --url "$TARGET_URL" --timeout "$NAV_TIMEOUT_MS" >"$tmp_log" 2>&1; then
+  if ! run_mcp --session "$SESSION_NAME" navigate-page --url "$TARGET_URL" --timeout "$NAV_TIMEOUT_MS"; then
     cat "$tmp_log" >&2
     fail "target navigation failed: $TARGET_URL"
   fi
 
   target_snapshot="$(uvx mcp2cli --session "$SESSION_NAME" take-snapshot 2>&1)"
+  if is_tool_error_output "$target_snapshot"; then
+    echo "$target_snapshot" >&2
+    fail "failed to read target snapshot after navigation: $TARGET_URL"
+  fi
   if [[ "$target_snapshot" != *"RootWebArea"* ]]; then
     echo "$target_snapshot" >&2
     fail "target snapshot did not contain a RootWebArea"
+  fi
+  if [[ "$target_snapshot" == *'url="chrome-error://chromewebdata/'* ]]; then
+    echo "$target_snapshot" >&2
+    fail "target navigation landed on Chrome error page: $TARGET_URL"
   fi
 
   echo "PREFLIGHT PASS: prerequisites OK; target navigation succeeded: $TARGET_URL"

@@ -17,7 +17,7 @@ The useful signal was the startup/context shape, not a general benchmark claim:
 | CLI skill through `mcp2cli` | 19k total, `MCP Tools` 155 | about 18-21k | 9/9 passes; slower in one run, steadier context growth |
 | Direct Chrome DevTools MCP | 24k total, `MCP Tools` 4.9k | about 16-56k | 9/9 passes; fastest single run, more variance |
 
-That is one local experiment, not a universal result. It was enough to make the workflow worth packaging: direct MCP is richer when your agent has it; the CLI skill is useful when you want a shell-native path with progressive discovery and lower upfront tool-surface load.
+That is one local experiment, not a universal claim. It was enough to make the workflow worth packaging: direct MCP is richer when your agent has it; the CLI skill is useful when you want a shell-native path with progressive discovery and lower upfront tool-surface load.
 
 [pi](https://pi.dev) is a good example of the target shape: a lean coding agent that can run commands but may not come with MCP mounted in the runtime. For that kind of agent, `mcp2cli` is less about replacing MCP and more about reaching MCP servers from the interface the agent already has.
 
@@ -30,9 +30,9 @@ Some agents are shell-first. They can run commands but do not come with MCP inst
 This skill packages that workflow:
 
 - preflight local prerequisites before browser work
-- use one named browser session for repeated commands
-- prefer text snapshots and DOM assertions over screenshots
-- prefer form-level interactions over many one-off clicks/fills
+- check for an existing session before starting a new one
+- keep one named browser session alive for repeated commands
+- prefer selector-first helpers over uid resolution in the common flow
 - inspect console and network output when the page misbehaves
 - stop the session when done
 
@@ -102,6 +102,28 @@ bash scripts/preflight.sh http://localhost:8501 browser-preflight
 
 Preflight checks browser-driving prerequisites. Target app reachability is not a mandatory preflight gate unless you pass a URL.
 
+## Persistent app session workflow
+
+For a live app, keep one named session open across all related checks.
+
+```bash
+bash scripts/browser-session.sh session-list
+bash scripts/browser-session.sh ensure-session browserverify
+bash scripts/browser-session.sh navigate browserverify http://localhost:8000/docs/index.html
+bash scripts/browser-session.sh snapshot browserverify
+bash scripts/browser-session.sh click-selector browserverify '#leaderboard tbody tr'
+bash scripts/browser-session.sh get-selector-text browserverify '#cost-per-elo'
+bash scripts/browser-session.sh assert-selector-contains browserverify '#cost-per-elo' 'Cost/Elo:'
+bash scripts/browser-session.sh wait-for-text browserverify 'Leaderboard'
+bash scripts/browser-session.sh stop-session browserverify
+```
+
+If a run is interrupted and leaves a session alive, use `session-list` to find it and `stop-session` to recover.
+
+`browser-session.sh ensure-session` and `start-session` also honor `MCP_SERVER_CMD` when `server-cmd` is omitted.
+
+`wait-for-text` prints a concise one-line success message by default to avoid snapshot bloat; set `WAIT_FOR_VERBOSE=1` when you need the full wait output.
+
 ## Repository layout
 
 ```text
@@ -114,6 +136,7 @@ skills/
     SKILL.md
     scripts/
       preflight.sh
+      browser-session.sh
 ```
 
 ## Use
@@ -124,7 +147,7 @@ Ask in plain language:
 - "Open the app, verify the main navigation, inspect console errors, and report evidence."
 - "Use a browser session to reproduce the failing interaction and capture page state."
 
-The agent should run preflight first, keep one named session for repeated commands, and clean up the session at the end.
+The agent should run preflight first, reuse one named session for repeated commands, prefer the selector-first helper script for ordinary interactions, and clean up the session at the end.
 
 ## Security and privacy
 
