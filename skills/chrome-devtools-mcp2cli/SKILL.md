@@ -97,12 +97,32 @@ bash scripts/browser-session.sh tool-help --session browserverify performance-st
 bash scripts/browser-session.sh run-tool --session browserverify list-console-messages --types '["warn","error"]'
 ```
 
+## Page targeting
+
+Current `chrome-devtools-mcp` tools require `--page-id`. Wrappers resolve it automatically:
+
+1. `PAGE_ID` env if set
+2. else the `list-pages` entry marked `[selected]`
+3. else the first open page
+
+```bash
+bash scripts/browser-session.sh list-pages browserverify
+bash scripts/browser-session.sh new-page browserverify https://example.com
+bash scripts/browser-session.sh select-page browserverify 2
+PAGE_ID=2 bash scripts/browser-session.sh snapshot browserverify
+```
+
+`navigate` also passes `--type url` required by current schemas.
+
+When wrappers fail with schema errors, use `tool-help` then `run-tool` with explicit flags.
+
 ## Behavior notes
 
 - `wait-for-text` prints one-line success output by default.
   - Set `WAIT_FOR_VERBOSE=1` for full output.
 - `ensure-session` and `start-session` use `MCP_SERVER_CMD` when provided.
 - Wrapper commands fail fast when MCP returns tool-level errors.
+- Prefer `run-tool` for brand-new MCP tools or flags the wrappers do not know yet.
 
 ## Failure handling
 

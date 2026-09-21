@@ -16,6 +16,9 @@ Environment:
   MCP_SERVER_CMD               Full MCP server command override
   NAV_TIMEOUT_MS               Navigation timeout in milliseconds (default: 60000)
   KEEP_LOG_ON_FAIL             Keep temporary log file on failure when set to 1
+
+Notes:
+  Passes --page-id / --type url for current chrome-devtools-mcp schemas.
 EOF
 }
 
@@ -86,12 +89,31 @@ if ! run_mcp --session "$SESSION_NAME" list-pages; then
   fail "chrome-devtools-mcp session '$SESSION_NAME' started, but list-pages failed"
 fi
 
-if ! run_mcp --session "$SESSION_NAME" navigate-page --url "about:blank" --timeout "$NAV_TIMEOUT_MS"; then
+PAGE_ID="$(awk '/\[selected\]/ { if (match($0, /^[0-9]+/)) { print substr($0, RSTART, RLENGTH); exit } }' "$tmp_log")"
+if [[ -z "$PAGE_ID" ]]; then
+  PAGE_ID="$(awk '/^[0-9]+:/ { if (match($0, /^[0-9]+/)) { print substr($0, RSTART, RLENGTH); exit } }' "$tmp_log")"
+fi
+if [[ -z "$PAGE_ID" ]]; then
+  cat "$tmp_log" >&2
+  fail "could not resolve page id from list-pages"
+fi
+
+if ! run_mcp --session "$SESSION_NAME" navigate-page --page-id "$PAGE_ID" --type url --url "about:blank" --timeout "$NAV_TIMEOUT_MS"; then
   cat "$tmp_log" >&2
   fail "chrome-devtools-mcp could not navigate to about:blank"
 fi
 
-snapshot="$(uvx mcp2cli --session "$SESSION_NAME" take-snapshot 2>&1)"
+# Refresh page id after navigation (new tabs can change selection)
+if ! run_mcp --session "$SESSION_NAME" list-pages; then
+  cat "$tmp_log" >&2
+  fail "list-pages failed after about:blank navigation"
+fi
+PAGE_ID="$(awk '/\[selected\]/ { if (match($0, /^[0-9]+/)) { print substr($0, RSTART, RLENGTH); exit } }' "$tmp_log")"
+if [[ -z "$PAGE_ID" ]]; then
+  PAGE_ID="$(awk '/^[0-9]+:/ { if (match($0, /^[0-9]+/)) { print substr($0, RSTART, RLENGTH); exit } }' "$tmp_log")"
+fi
+
+snapshot="$(uvx mcp2cli --session "$SESSION_NAME" take-snapshot --page-id "$PAGE_ID" 2>&1)"
 if is_tool_error_output "$snapshot"; then
   echo "$snapshot" >&2
   fail "failed to read snapshot after about:blank navigation"
@@ -106,12 +128,21 @@ if [[ "$snapshot" != *'url="about:blank"'* ]]; then
 fi
 
 if [[ -n "$TARGET_URL" ]]; then
-  if ! run_mcp --session "$SESSION_NAME" navigate-page --url "$TARGET_URL" --timeout "$NAV_TIMEOUT_MS"; then
+  if ! run_mcp --session "$SESSION_NAME" navigate-page --page-id "$PAGE_ID" --type url --url "$TARGET_URL" --timeout "$NAV_TIMEOUT_MS"; then
     cat "$tmp_log" >&2
     fail "target navigation failed: $TARGET_URL"
   fi
 
-  target_snapshot="$(uvx mcp2cli --session "$SESSION_NAME" take-snapshot 2>&1)"
+  if ! run_mcp --session "$SESSION_NAME" list-pages; then
+    cat "$tmp_log" >&2
+    fail "list-pages failed after target navigation"
+  fi
+  PAGE_ID="$(awk '/\[selected\]/ { if (match($0, /^[0-9]+/)) { print substr($0, RSTART, RLENGTH); exit } }' "$tmp_log")"
+  if [[ -z "$PAGE_ID" ]]; then
+    PAGE_ID="$(awk '/^[0-9]+:/ { if (match($0, /^[0-9]+/)) { print substr($0, RSTART, RLENGTH); exit } }' "$tmp_log")"
+  fi
+
+  target_snapshot="$(uvx mcp2cli --session "$SESSION_NAME" take-snapshot --page-id "$PAGE_ID" 2>&1)"
   if is_tool_error_output "$target_snapshot"; then
     echo "$target_snapshot" >&2
     fail "failed to read target snapshot after navigation: $TARGET_URL"

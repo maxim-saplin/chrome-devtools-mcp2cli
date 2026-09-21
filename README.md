@@ -52,6 +52,16 @@ Optional target check:
 bash scripts/preflight.sh http://localhost:8501 browser-preflight
 ```
 
+## Page targeting
+
+`chrome-devtools-mcp` page tools require `--page-id`. The wrappers pick the `[selected]` page from `list-pages` (or `PAGE_ID` if set). `navigate` also sends `--type url`.
+
+```bash
+bash scripts/browser-session.sh list-pages browserverify
+bash scripts/browser-session.sh new-page browserverify https://example.com
+bash scripts/browser-session.sh select-page browserverify 2
+```
+
 ## Core workflow
 
 ```bash

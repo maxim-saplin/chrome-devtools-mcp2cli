@@ -33,6 +33,10 @@ Usage:
   browser-session.sh trace-stop [session-name]
   browser-session.sh trace-insight [session-name] <insight-set-id> <insight-name>
 
+  browser-session.sh list-pages [session-name]
+  browser-session.sh new-page [session-name] <url>
+  browser-session.sh select-page [session-name] <page-id>
+
   browser-session.sh tools-list [--session <session-name>] [pattern]
   browser-session.sh tool-help [--session <session-name>] <tool-name>
   browser-session.sh run-tool [--session <session-name>] <tool-name> [arg ...]
@@ -45,6 +49,7 @@ Defaults:
 Environment:
   MCP_SERVER_CMD   default server command for ensure/start session
   WAIT_FOR_VERBOSE if set to 1, wait-for-text prints full wait output
+  PAGE_ID          force page id for page-scoped tools (otherwise auto from list-pages [selected])
 EOF
 }
 
@@ -76,6 +81,48 @@ run_mcp2cli() {
 
   printf '%s\n' "$output"
 }
+
+# Resolve the active page id for page-scoped chrome-devtools-mcp tools.
+# Prefer PAGE_ID env, else the list-pages line marked [selected], else the first page.
+selected_page_id() {
+  local session="$1"
+  if [[ -n "${PAGE_ID:-}" ]]; then
+    printf '%s\n' "$PAGE_ID"
+    return 0
+  fi
+
+  local pages page_id
+  pages="$(run_mcp2cli --session "$session" list-pages)" || return 1
+  page_id="$(printf '%s\n' "$pages" | awk '
+    /\[selected\]/ {
+      if (match($0, /^[0-9]+/)) { print substr($0, RSTART, RLENGTH); exit }
+    }
+  ')"
+  if [[ -z "$page_id" ]]; then
+    page_id="$(printf '%s\n' "$pages" | awk '
+      /^[0-9]+:/ {
+        if (match($0, /^[0-9]+/)) { print substr($0, RSTART, RLENGTH); exit }
+      }
+    ')"
+  fi
+  if [[ -z "$page_id" ]]; then
+    echo "Unable to resolve page id from list-pages (set PAGE_ID or open a page)" >&2
+    printf '%s\n' "$pages" >&2
+    return 1
+  fi
+  printf '%s\n' "$page_id"
+}
+
+with_page_id() {
+  # Usage: with_page_id <session> <tool> [args...]
+  local session="$1"
+  local tool="$2"
+  shift 2
+  local page_id
+  page_id="$(selected_page_id "$session")" || return 1
+  run_mcp2cli --session "$session" "$tool" --page-id "$page_id" "$@"
+}
+
 
 session_exists() {
   local session="$1"
@@ -120,7 +167,9 @@ run_eval() {
 EOF
 )
 
-  run_mcp2cli --session "$session" evaluate-script --function "$wrapper"
+  local page_id
+  page_id="$(selected_page_id "$session")" || return 1
+  run_mcp2cli --session "$session" evaluate-script --page-id "$page_id" --function "$wrapper"
 }
 
 run_wait_for_text() {
@@ -131,7 +180,9 @@ run_wait_for_text() {
   texts_json="$(json_array "$text")"
 
   local output
-  if ! output="$(uvx mcp2cli --session "$session" wait-for --text "$texts_json" --timeout "$timeout_ms" 2>&1)"; then
+  local page_id
+  page_id="$(selected_page_id "$session")" || return 1
+  if ! output="$(uvx mcp2cli --session "$session" wait-for --page-id "$page_id" --text "$texts_json" --timeout "$timeout_ms" 2>&1)"; then
     printf '%s\n' "$output" >&2
     return 1
   fi
@@ -177,15 +228,17 @@ case "${1:-}" in
     fi
     url="$2"
     timeout_ms="${3:-60000}"
-    run_mcp2cli --session "$session" navigate-page --url "$url" --timeout "$timeout_ms"
+    page_id="$(selected_page_id "$session")" || exit 1
+    run_mcp2cli --session "$session" navigate-page --page-id "$page_id" --type url --url "$url" --timeout "$timeout_ms"
     ;;
   snapshot)
     shift
     session="${1:-browser}"
+    page_id="$(selected_page_id "$session")" || exit 1
     if [[ "${2:-}" == "--verbose" ]]; then
-      run_mcp2cli --session "$session" take-snapshot --verbose
+      run_mcp2cli --session "$session" take-snapshot --page-id "$page_id" --verbose
     else
-      run_mcp2cli --session "$session" take-snapshot
+      run_mcp2cli --session "$session" take-snapshot --page-id "$page_id"
     fi
     ;;
   click-selector)
@@ -408,7 +461,8 @@ EOF
       esac
     done
 
-    args=(--session "$session" list-console-messages)
+    page_id="$(selected_page_id "$session")" || exit 1
+    args=(--session "$session" list-console-messages --page-id "$page_id")
     if [[ -n "$types_json" ]]; then
       args+=(--types "$types_json")
     fi
@@ -446,7 +500,8 @@ EOF
       exit 1
     fi
 
-    args=(--session "$session" list-console-messages --types '["error"]' --page-size "$page_size")
+    page_id="$(selected_page_id "$session")" || exit 1
+    args=(--session "$session" list-console-messages --page-id "$page_id" --types '["error"]' --page-size "$page_size")
     if [[ "$include_preserved" == "true" ]]; then
       args+=(--include-preserved-messages)
     fi
@@ -509,7 +564,8 @@ EOF
       esac
     done
 
-    args=(--session "$session" list-network-requests)
+    page_id="$(selected_page_id "$session")" || exit 1
+    args=(--session "$session" list-network-requests --page-id "$page_id")
     if [[ -n "$resource_types_json" ]]; then
       args+=(--resource-types "$resource_types_json")
     fi
@@ -547,7 +603,8 @@ EOF
       exit 1
     fi
 
-    args=(--session "$session" list-network-requests --page-size "$page_size")
+    page_id="$(selected_page_id "$session")" || exit 1
+    args=(--session "$session" list-network-requests --page-id "$page_id" --page-size "$page_size")
     if [[ "$include_preserved" == "true" ]]; then
       args+=(--include-preserved-requests)
     fi
@@ -617,7 +674,8 @@ EOF
       exit 1
     fi
 
-    args=(--session "$session" lighthouse-audit --mode "$mode" --device "$device")
+    page_id="$(selected_page_id "$session")" || exit 1
+    args=(--session "$session" lighthouse-audit --page-id "$page_id" --mode "$mode" --device "$device")
     if [[ -n "$output_dir" ]]; then
       args+=(--output-dir-path "$output_dir")
     fi
@@ -660,6 +718,31 @@ EOF
     fi
 
     run_mcp2cli --session "$session" performance-analyze-insight --insight-set-id "$insight_set_id" --insight-name "$insight_name"
+    ;;
+  list-pages)
+    shift
+    session="${1:-browser}"
+    run_mcp2cli --session "$session" list-pages
+    ;;
+  new-page)
+    shift
+    session="${1:-browser}"
+    if [[ $# -lt 2 ]]; then
+      usage
+      exit 1
+    fi
+    url="$2"
+    run_mcp2cli --session "$session" new-page --url "$url"
+    ;;
+  select-page)
+    shift
+    session="${1:-browser}"
+    if [[ $# -lt 2 ]]; then
+      usage
+      exit 1
+    fi
+    page_id="$2"
+    run_mcp2cli --session "$session" select-page --page-id "$page_id" --bring-to-front
     ;;
   tools-list)
     shift
